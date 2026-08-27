@@ -14,6 +14,13 @@ const {
     ButtonStyle
 } = require('discord.js');
 
+const {
+    TROPHIES,
+    addPlayer,
+    addPlayerStats,
+    getPlayer
+} = require('./commands/players');
+
 const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
@@ -50,16 +57,14 @@ if (fs.existsSync('./funds.json')) {
     }
 }
 
-// Give new clubs £100,000
+// Add missing clubs with £100,000
 for (const club of clubs) {
-
     if (funds[club] === undefined) {
         funds[club] = 100000;
     }
 }
 
 function saveFunds() {
-
     fs.writeFileSync(
         './funds.json',
         JSON.stringify(funds, null, 2)
@@ -75,23 +80,22 @@ saveFunds();
 let results = [];
 
 if (fs.existsSync('./results.json')) {
-
     try {
-
         results = JSON.parse(
             fs.readFileSync('./results.json', 'utf8')
         );
 
+        if (!Array.isArray(results)) {
+            results = [];
+        }
+
     } catch (error) {
-
         console.error('Could not read results.json:', error);
-
         results = [];
     }
 }
 
 function saveResults() {
-
     fs.writeFileSync(
         './results.json',
         JSON.stringify(results, null, 2)
@@ -99,25 +103,42 @@ function saveResults() {
 }
 
 // ==========================================
-// PERMISSION FUNCTIONS
+// PERMISSIONS
 // ==========================================
 
 function isAdmin(interaction) {
-
     return interaction.member.permissions.has('Administrator');
 }
 
-function hasTeamRole(interaction) {
-
-    return interaction.member.roles.cache.some(role =>
-        role.name === 'Team Owner' ||
-        role.name === 'Team Manager'
+function isFABoard(interaction) {
+    return interaction.member.roles.cache.some(
+        role => role.name === 'FA Board'
     );
 }
 
-function canManageFunds(interaction) {
+function hasTeamRole(interaction) {
+    return interaction.member.roles.cache.some(
+        role =>
+            role.name === 'Team Owner' ||
+            role.name === 'Team Manager'
+    );
+}
 
-    return isAdmin(interaction) || hasTeamRole(interaction);
+// Funds + table
+function canManageClub(interaction) {
+    return (
+        isAdmin(interaction) ||
+        isFABoard(interaction) ||
+        hasTeamRole(interaction)
+    );
+}
+
+// Player management + results
+function canManageLeague(interaction) {
+    return (
+        isAdmin(interaction) ||
+        isFABoard(interaction)
+    );
 }
 
 // ==========================================
@@ -226,7 +247,94 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName('resettable')
-        .setDescription('Reset the REFL league table')
+        .setDescription('Reset the REFL league table'),
+
+    // ======================================
+    // ADD PLAYERS
+    // ======================================
+
+    new SlashCommandBuilder()
+        .setName('addplayers')
+        .setDescription('Add a player to the REFL database')
+
+        .addStringOption(option =>
+            option
+                .setName('username')
+                .setDescription('The player username')
+                .setRequired(true)
+        )
+
+        .addStringOption(option =>
+            option
+                .setName('club')
+                .setDescription('The player club')
+                .setRequired(true)
+                .addChoices(
+                    ...clubs.map(club => ({
+                        name: club,
+                        value: club
+                    }))
+                )
+        ),
+
+    // ======================================
+    // ADD PLAYER STATS
+    // ======================================
+
+    new SlashCommandBuilder()
+        .setName('addplayerstats')
+        .setDescription('Add goals, assists or trophies to a player')
+
+        .addStringOption(option =>
+            option
+                .setName('username')
+                .setDescription('The player username')
+                .setRequired(true)
+        )
+
+        .addIntegerOption(option =>
+            option
+                .setName('goals')
+                .setDescription('Goals to add')
+                .setRequired(false)
+                .setMinValue(0)
+        )
+
+        .addIntegerOption(option =>
+            option
+                .setName('assists')
+                .setDescription('Assists to add')
+                .setRequired(false)
+                .setMinValue(0)
+        )
+
+        .addStringOption(option =>
+            option
+                .setName('trophy')
+                .setDescription('Trophy to add')
+                .setRequired(false)
+                .addChoices(
+                    ...TROPHIES.map(trophy => ({
+                        name: trophy,
+                        value: trophy
+                    }))
+                )
+        ),
+
+    // ======================================
+    // CHECK PLAYER STATS
+    // ======================================
+
+    new SlashCommandBuilder()
+        .setName('checkplayerstats')
+        .setDescription('Check a player\'s REFL statistics')
+
+        .addStringOption(option =>
+            option
+                .setName('username')
+                .setDescription('The player username')
+                .setRequired(true)
+        )
 
 ].map(command => command.toJSON());
 
@@ -336,7 +444,9 @@ client.on('interactionCreate', async interaction => {
     // SLASH COMMANDS
     // ======================================
 
-    if (!interaction.isChatInputCommand()) return;
+    if (!interaction.isChatInputCommand()) {
+        return;
+    }
 
     // ======================================
     // PING
@@ -363,7 +473,6 @@ client.on('interactionCreate', async interaction => {
         const amount =
             interaction.options.getInteger('amount');
 
-        // Check club
         if (!clubs.includes(club)) {
 
             await interaction.reply({
@@ -375,10 +484,7 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
-        // ----------------------------------
-        // VIEW FUNDS
-        // ----------------------------------
-
+        // View funds
         if (amount === null) {
 
             await interaction.reply(
@@ -388,24 +494,17 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
-        // ----------------------------------
-        // PERMISSION CHECK
-        // ----------------------------------
-
-        if (!canManageFunds(interaction)) {
+        // Permission
+        if (!canManageClub(interaction)) {
 
             await interaction.reply({
                 content:
-                    '❌ You need the **Team Owner** or **Team Manager** role to change club funds.',
+                    '❌ You need **Administrator**, **FA Board**, **Team Owner**, or **Team Manager** to change club funds.',
                 ephemeral: true
             });
 
             return;
         }
-
-        // ----------------------------------
-        // CHANGE FUNDS
-        // ----------------------------------
 
         funds[club] += amount;
 
@@ -415,7 +514,6 @@ client.on('interactionCreate', async interaction => {
 
         saveFunds();
 
-        // Added
         if (amount > 0) {
 
             await interaction.reply(
@@ -423,18 +521,13 @@ client.on('interactionCreate', async interaction => {
                 `New balance: **£${funds[club].toLocaleString()}**`
             );
 
-            return;
-        }
-
-        // Removed
-        if (amount < 0) {
+        } else if (amount < 0) {
 
             await interaction.reply(
                 `💷 Removed **£${Math.abs(amount).toLocaleString()}** from **${club}**.\n` +
                 `New balance: **£${funds[club].toLocaleString()}**`
             );
 
-            return;
         }
 
         return;
@@ -446,12 +539,11 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'result') {
 
-        // Only administrators
-        if (!isAdmin(interaction)) {
+        if (!canManageLeague(interaction)) {
 
             await interaction.reply({
                 content:
-                    '❌ Only **Administrators** can add match results.',
+                    '❌ Only **Administrators** or the **FA Board** can add match results.',
                 ephemeral: true
             });
 
@@ -470,7 +562,6 @@ client.on('interactionCreate', async interaction => {
         const awayScore =
             interaction.options.getInteger('away_score');
 
-        // Can't play yourself
         if (home === away) {
 
             await interaction.reply({
@@ -482,25 +573,17 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
-        // Save result
         results.push({
-
             home: home,
             away: away,
-
             homeScore: homeScore,
             awayScore: awayScore,
-
-            recordedBy:
-                interaction.user.tag,
-
-            timestamp:
-                new Date().toISOString()
+            recordedBy: interaction.user.tag,
+            timestamp: new Date().toISOString()
         });
 
         saveResults();
 
-        // Result message
         let resultText;
 
         if (homeScore > awayScore) {
@@ -520,13 +603,9 @@ client.on('interactionCreate', async interaction => {
         }
 
         await interaction.reply(
-
             `⚽ **REFL Match Result**\n\n` +
-
             `🔴 **${home}** ${homeScore} - ${awayScore} **${away}** 🔵\n\n` +
-
             resultText
-
         );
 
         return;
@@ -538,40 +617,34 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'table') {
 
-        // Team Owner / Manager / Admin
-        if (!canManageFunds(interaction)) {
+        if (!canManageClub(interaction)) {
 
             await interaction.reply({
                 content:
-                    '❌ You need the **Team Owner** or **Team Manager** role to view the table.',
+                    '❌ You need **Administrator**, **FA Board**, **Team Owner**, or **Team Manager** to view the table.',
                 ephemeral: true
             });
 
             return;
         }
 
-        // Create table
         const table = {};
 
         for (const club of clubs) {
 
             table[club] = {
-
                 played: 0,
-
                 wins: 0,
                 draws: 0,
                 losses: 0,
-
                 gf: 0,
                 ga: 0,
                 gd: 0,
-
                 points: 0
             };
         }
 
-        // Process results
+        // Calculate standings
         for (const result of results) {
 
             const home =
@@ -580,7 +653,9 @@ client.on('interactionCreate', async interaction => {
             const away =
                 table[result.away];
 
-            if (!home || !away) continue;
+            if (!home || !away) {
+                continue;
+            }
 
             home.played++;
             away.played++;
@@ -591,7 +666,6 @@ client.on('interactionCreate', async interaction => {
             away.gf += result.awayScore;
             away.ga += result.homeScore;
 
-            // Home win
             if (result.homeScore > result.awayScore) {
 
                 home.wins++;
@@ -599,20 +673,14 @@ client.on('interactionCreate', async interaction => {
 
                 away.losses++;
 
-            }
-
-            // Away win
-            else if (result.awayScore > result.homeScore) {
+            } else if (result.awayScore > result.homeScore) {
 
                 away.wins++;
                 away.points += 3;
 
                 home.losses++;
 
-            }
-
-            // Draw
-            else {
+            } else {
 
                 home.draws++;
                 away.draws++;
@@ -630,42 +698,36 @@ client.on('interactionCreate', async interaction => {
                 table[club].ga;
         }
 
-        // Sort table
+        // Sort
         const sortedClubs =
             [...clubs].sort((a, b) => {
 
-                // Points
                 if (
                     table[b].points !==
                     table[a].points
                 ) {
-
                     return (
                         table[b].points -
                         table[a].points
                     );
                 }
 
-                // Goal difference
                 if (
                     table[b].gd !==
                     table[a].gd
                 ) {
-
                     return (
                         table[b].gd -
                         table[a].gd
                     );
                 }
 
-                // Goals scored
                 return (
                     table[b].gf -
                     table[a].gf
                 );
             });
 
-        // Build table
         let tableText = '';
 
         sortedClubs.forEach(
@@ -680,9 +742,7 @@ client.on('interactionCreate', async interaction => {
                         : `${stats.gd}`;
 
                 tableText +=
-
                     `**${index + 1}. ${club}**\n` +
-
                     `P ${stats.played} • ` +
                     `W ${stats.wins} • ` +
                     `D ${stats.draws} • ` +
@@ -696,20 +756,12 @@ client.on('interactionCreate', async interaction => {
 
         const embed =
             new EmbedBuilder()
-
-                .setTitle(
-                    '🏆 REFL League Table'
-                )
-
-                .setDescription(
-                    tableText
-                )
-
+                .setTitle('🏆 REFL League Table')
+                .setDescription(tableText)
                 .setFooter({
                     text:
                         'REFL • Official League Table'
                 })
-
                 .setTimestamp();
 
         await interaction.reply({
@@ -725,7 +777,6 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'resettable') {
 
-        // Admin only
         if (!isAdmin(interaction)) {
 
             await interaction.reply({
@@ -739,14 +790,12 @@ client.on('interactionCreate', async interaction => {
 
         const embed =
             new EmbedBuilder()
-
                 .setTitle(
                     '⚠️ Reset REFL League Table?'
                 )
-
                 .setDescription(
                     'This will permanently delete **ALL recorded match results**.\n\n' +
-                    'Club funds will **NOT** be affected.'
+                    'Club funds and player statistics will **NOT** be affected.'
                 );
 
         const buttons =
@@ -777,10 +826,213 @@ client.on('interactionCreate', async interaction => {
                 );
 
         await interaction.reply({
-
             embeds: [embed],
-
             components: [buttons]
+        });
+
+        return;
+    }
+
+    // ======================================
+    // ADD PLAYERS
+    // ======================================
+
+    if (interaction.commandName === 'addplayers') {
+
+        if (!canManageLeague(interaction)) {
+
+            await interaction.reply({
+                content:
+                    '❌ Only **Administrators** or the **FA Board** can add players.',
+                ephemeral: true
+            });
+
+            return;
+        }
+
+        const username =
+            interaction.options.getString('username');
+
+        const club =
+            interaction.options.getString('club');
+
+        const result =
+            addPlayer(username, club);
+
+        if (!result.success) {
+
+            await interaction.reply({
+                content:
+                    `❌ ${result.message}`,
+                ephemeral: true
+            });
+
+            return;
+        }
+
+        await interaction.reply(
+            `✅ Added **${username}** to **${club}**.\n\n` +
+            `⚽ Goals: **0**\n` +
+            `🎯 Assists: **0**\n` +
+            `🏆 Trophies: **0**`
+        );
+
+        return;
+    }
+
+    // ======================================
+    // ADD PLAYER STATS
+    // ======================================
+
+    if (interaction.commandName === 'addplayerstats') {
+
+        if (!canManageLeague(interaction)) {
+
+            await interaction.reply({
+                content:
+                    '❌ Only **Administrators** or the **FA Board** can add player stats.',
+                ephemeral: true
+            });
+
+            return;
+        }
+
+        const username =
+            interaction.options.getString('username');
+
+        const goals =
+            interaction.options.getInteger('goals') || 0;
+
+        const assists =
+            interaction.options.getInteger('assists') || 0;
+
+        const trophy =
+            interaction.options.getString('trophy');
+
+        if (
+            goals === 0 &&
+            assists === 0 &&
+            !trophy
+        ) {
+
+            await interaction.reply({
+                content:
+                    '❌ You need to add at least one goal, assist, or trophy.',
+                ephemeral: true
+            });
+
+            return;
+        }
+
+        const result =
+            addPlayerStats(
+                username,
+                goals,
+                assists,
+                trophy
+            );
+
+        if (!result.success) {
+
+            await interaction.reply({
+                content:
+                    `❌ ${result.message}`,
+                ephemeral: true
+            });
+
+            return;
+        }
+
+        const player =
+            result.player;
+
+        let message =
+            `✅ Updated stats for **${player.username}**.\n\n`;
+
+        if (goals > 0) {
+
+            message +=
+                `⚽ Goals: **+${goals}** → **${player.goals}**\n`;
+        }
+
+        if (assists > 0) {
+
+            message +=
+                `🎯 Assists: **+${assists}** → **${player.assists}**\n`;
+        }
+
+        if (trophy) {
+
+            message +=
+                `🏆 ${trophy}: **${player.trophies[trophy]}**\n`;
+        }
+
+        await interaction.reply(message);
+
+        return;
+    }
+
+    // ======================================
+    // CHECK PLAYER STATS
+    // ======================================
+
+    if (interaction.commandName === 'checkplayerstats') {
+
+        if (!canManageLeague(interaction)) {
+
+            await interaction.reply({
+                content:
+                    '❌ Only **Administrators** or the **FA Board** can view player stats.',
+                ephemeral: true
+            });
+
+            return;
+        }
+
+        const username =
+            interaction.options.getString('username');
+
+        const player =
+            getPlayer(username);
+
+        if (!player) {
+
+            await interaction.reply({
+                content:
+                    `❌ No player named **${username}** exists.`,
+                ephemeral: true
+            });
+
+            return;
+        }
+
+        const embed =
+            new EmbedBuilder()
+
+                .setTitle(
+                    `👤 ${player.username}`
+                )
+
+                .setDescription(
+                    `🏟️ **Club:** ${player.club}\n\n` +
+
+                    `⚽ **Goals:** ${player.goals}\n` +
+                    `🎯 **Assists:** ${player.assists}\n\n` +
+
+                    `🏆 **Trophies**\n` +
+                    `D1: **${player.trophies['D1']}**\n` +
+                    `National Cup: **${player.trophies['National Cup']}**\n` +
+                    `Pre-Season Cup: **${player.trophies['Pre-Season Cup']}**\n` +
+                    `Super Cup: **${player.trophies['Super Cup']}**`
+                )
+
+                .setFooter({
+                    text:
+                        'REFL • Player Statistics'
+                });
+
+        await interaction.reply({
+            embeds: [embed]
         });
 
         return;
@@ -788,11 +1040,30 @@ client.on('interactionCreate', async interaction => {
 });
 
 // ==========================================
+// ERROR HANDLING
+// ==========================================
+
+client.on('error', error => {
+    console.error('Discord client error:', error);
+});
+
+process.on('unhandledRejection', error => {
+    console.error('Unhandled promise rejection:', error);
+});
+
+// ==========================================
 // LOGIN
 // ==========================================
+
+if (!process.env.DISCORD_TOKEN) {
+
+    console.error(
+        '❌ DISCORD_TOKEN is missing from environment variables.'
+    );
+
+    process.exit(1);
+}
 
 client.login(
     process.env.DISCORD_TOKEN
 );
-
-client.login(process.env.DISCORD_TOKEN);
