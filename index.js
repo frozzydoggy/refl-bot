@@ -18,7 +18,10 @@ const {
     TROPHIES,
     addPlayer,
     addPlayerStats,
-    getPlayer
+    getPlayer,
+    getAllPlayers,
+    removePlayer,
+    editPlayerClub
 } = require('./commands/players');
 
 const client = new Client({
