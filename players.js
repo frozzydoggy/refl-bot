@@ -1,156 +1,85 @@
-const fs = require('fs');
+const fs = require("fs");
+const path = require("path");
 
-const PLAYERS_FILE = './players.json';
-
-// ==========================================
-// REFL TROPHIES
-// ==========================================
-
-const TROPHIES = [
-    'D1',
-    'National Cup',
-    'Pre-Season Cup',
-    'Super Cup'
-];
-
-// ==========================================
-// LOAD PLAYERS
-// ==========================================
+const playersFile = path.join(__dirname, "..", "players.json");
 
 function loadPlayers() {
-    if (!fs.existsSync(PLAYERS_FILE)) {
-        return {};
+    if (!fs.existsSync(playersFile)) {
+        fs.writeFileSync(playersFile, JSON.stringify({ players: {} }, null, 2));
     }
 
     try {
-        return JSON.parse(
-            fs.readFileSync(PLAYERS_FILE, 'utf8')
-        );
+        const data = fs.readFileSync(playersFile, "utf8");
+
+        if (!data.trim()) {
+            return { players: {} };
+        }
+
+        return JSON.parse(data);
     } catch (error) {
-        console.error('Could not read players.json:', error);
-        return {};
+        console.error("Error reading players.json:", error);
+        return { players: {} };
     }
 }
 
-// ==========================================
-// SAVE PLAYERS
-// ==========================================
-
-function savePlayers(players) {
-    fs.writeFileSync(
-        PLAYERS_FILE,
-        JSON.stringify(players, null, 2)
-    );
+function savePlayers(data) {
+    fs.writeFileSync(playersFile, JSON.stringify(data, null, 2));
 }
 
-// ==========================================
-// ADD PLAYER
-// ==========================================
+function addPlayer(username, discordId) {
+    const data = loadPlayers();
 
-function addPlayer(username, club) {
-
-    const players = loadPlayers();
-
-    if (players[username]) {
-        return {
-            success: false,
-            message: 'That player already exists.'
-        };
+    if (data.players[username]) {
+        return false;
     }
 
-    players[username] = {
-        username: username,
-        club: club,
+    data.players[username] = {
+        discordId: discordId || null,
         goals: 0,
         assists: 0,
-        trophies: {
-            'D1': 0,
-            'National Cup': 0,
-            'Pre-Season Cup': 0,
-            'Super Cup': 0
-        }
+        trophies: 0
     };
 
-    savePlayers(players);
-
-    return {
-        success: true,
-        player: players[username]
-    };
+    savePlayers(data);
+    return true;
 }
-
-// ==========================================
-// ADD PLAYER STATS
-// ==========================================
-
-function addPlayerStats(
-    username,
-    goals,
-    assists,
-    trophy
-) {
-
-    const players = loadPlayers();
-
-    if (!players[username]) {
-        return {
-            success: false,
-            message: 'That player does not exist.'
-        };
-    }
-
-    players[username].goals += goals;
-    players[username].assists += assists;
-
-    if (trophy) {
-
-        if (!TROPHIES.includes(trophy)) {
-
-            return {
-                success: false,
-                message: 'Invalid trophy.'
-            };
-        }
-
-        players[username].trophies[trophy]++;
-    }
-
-    savePlayers(players);
-
-    return {
-        success: true,
-        player: players[username]
-    };
-}
-
-// ==========================================
-// GET PLAYER
-// ==========================================
 
 function getPlayer(username) {
-
-    const players = loadPlayers();
-
-    return players[username] || null;
+    const data = loadPlayers();
+    return data.players[username] || null;
 }
-
-// ==========================================
-// GET ALL PLAYERS
-// ==========================================
 
 function getAllPlayers() {
-
-    return loadPlayers();
+    const data = loadPlayers();
+    return data.players;
 }
 
-// ==========================================
-// EXPORT
-// ==========================================
+function updatePlayerStats(username, stats) {
+    const data = loadPlayers();
+
+    if (!data.players[username]) {
+        return false;
+    }
+
+    if (stats.goals !== undefined) {
+        data.players[username].goals = stats.goals;
+    }
+
+    if (stats.assists !== undefined) {
+        data.players[username].assists = stats.assists;
+    }
+
+    if (stats.trophies !== undefined) {
+        data.players[username].trophies = stats.trophies;
+    }
+
+    savePlayers(data);
+    return true;
+}
 
 module.exports = {
-    TROPHIES,
     addPlayer,
-    addPlayerStats,
     getPlayer,
-    getAllPlayers
+    getAllPlayers,
+    updatePlayerStats
 };
