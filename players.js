@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const playersFile = path.join(__dirname, '..', 'players.json');
+const PLAYERS_FILE = path.join(__dirname, '..', 'players.json');
 
 const TROPHIES = [
     'D1',
@@ -10,50 +10,129 @@ const TROPHIES = [
     'Super Cup'
 ];
 
+function createEmptyDatabase() {
+    return {
+        players: {}
+    };
+}
+
+function createEmptyPlayer(username, club) {
+    return {
+        username,
+        club,
+        goals: 0,
+        assists: 0,
+        trophies: {
+            D1: 0,
+            'National Cup': 0,
+            'Pre-Season Cup': 0,
+            'Super Cup': 0
+        }
+    };
+}
+
 function loadPlayers() {
     try {
-        if (!fs.existsSync(playersFile)) {
-            const initialData = { players: {} };
+        if (!fs.existsSync(PLAYERS_FILE)) {
+            const database = createEmptyDatabase();
+
             fs.writeFileSync(
-                playersFile,
-                JSON.stringify(initialData, null, 2)
+                PLAYERS_FILE,
+                JSON.stringify(database, null, 2)
             );
-            return initialData;
+
+            return database;
         }
 
-        const data = fs.readFileSync(playersFile, 'utf8');
+        const raw = fs.readFileSync(PLAYERS_FILE, 'utf8');
 
-        if (!data.trim()) {
-            return { players: {} };
+        if (!raw.trim()) {
+            return createEmptyDatabase();
         }
 
-        const parsed = JSON.parse(data);
+        const database = JSON.parse(raw);
 
-        if (!parsed.players) {
-            parsed.players = {};
+        if (!database.players || typeof database.players !== 'object') {
+            database.players = {};
         }
 
-        return parsed;
+        // Repair old/incomplete player entries
+        for (const key of Object.keys(database.players)) {
+            const player = database.players[key];
+
+            if (!player.username) {
+                player.username = key;
+            }
+
+            if (!player.club) {
+                player.club = 'Unknown';
+            }
+
+            if (typeof player.goals !== 'number') {
+                player.goals = 0;
+            }
+
+            if (typeof player.assists !== 'number') {
+                player.assists = 0;
+            }
+
+            if (!player.trophies || typeof player.trophies !== 'object') {
+                player.trophies = {};
+            }
+
+            for (const trophy of TROPHIES) {
+                if (typeof player.trophies[trophy] !== 'number') {
+                    player.trophies[trophy] = 0;
+                }
+            }
+        }
+
+        return database;
 
     } catch (error) {
-        console.error('Could not read players.json:', error);
-        return { players: {} };
+        console.error('❌ Could not load players.json:', error);
+
+        return createEmptyDatabase();
     }
 }
 
-function savePlayers(data) {
+function savePlayers(database) {
     try {
+        const temporaryFile = `${PLAYERS_FILE}.tmp`;
+
         fs.writeFileSync(
-            playersFile,
-            JSON.stringify(data, null, 2)
+            temporaryFile,
+            JSON.stringify(database, null, 2)
         );
+
+        fs.renameSync(
+            temporaryFile,
+            PLAYERS_FILE
+        );
+
+        return true;
+
     } catch (error) {
-        console.error('Could not save players.json:', error);
+        console.error('❌ Could not save players.json:', error);
+
+        return false;
     }
+}
+
+function findPlayerKey(database, username) {
+    if (!username) {
+        return null;
+    }
+
+    const search = username.trim().toLowerCase();
+
+    return Object.keys(database.players).find(
+        key => key.toLowerCase() === search
+    ) || null;
 }
 
 function addPlayer(username, club) {
-    const data = loadPlayers();
+    const database = loadPlayers();
 
     username = username.trim();
 
@@ -64,83 +143,175 @@ function addPlayer(username, club) {
         };
     }
 
-    if (data.players[username]) {
+    const existingPlayer = findPlayerKey(
+        database,
+        username
+    );
+
+    if (existingPlayer) {
         return {
             success: false,
-            message: `Player **${username}** already exists.`
+            message: `Player **${database.players[existingPlayer].username}** already exists.`
         };
     }
 
-    data.players[username] = {
-        username: username,
-        club: club,
-        goals: 0,
-        assists: 0,
-        trophies: {
-            D1: 0,
-            'National Cup': 0,
-            'Pre-Season Cup': 0,
-            'Super Cup': 0
-        }
-    };
+    const player = createEmptyPlayer(
+        username,
+        club
+    );
 
-    savePlayers(data);
+    database.players[username] = player;
+
+    if (!savePlayers(database)) {
+        return {
+            success: false,
+            message: 'Could not save the player database.'
+        };
+    }
 
     return {
         success: true,
-        player: data.players[username]
+        player
     };
 }
 
-function addPlayerStats(username, goals, assists, trophy) {
-    const data = loadPlayers();
+function addPlayerStats(
+    username,
+    goals = 0,
+    assists = 0,
+    trophy = null
+) {
+    const database = loadPlayers();
 
-    const player = data.players[username];
+    const playerKey = findPlayerKey(
+        database,
+        username
+    );
 
-    if (!player) {
+    if (!playerKey) {
         return {
             success: false,
             message: `No player named **${username}** exists.`
         };
     }
 
-    if (goals > 0) {
-        player.goals += goals;
+    const player = database.players[playerKey];
+
+    if (goals < 0 || assists < 0) {
+        return {
+            success: false,
+            message: 'Goals and assists cannot be negative.'
+        };
     }
 
-    if (assists > 0) {
-        player.assists += assists;
+    if (trophy && !TROPHIES.includes(trophy)) {
+        return {
+            success: false,
+            message: `**${trophy}** is not a valid REFL trophy.`
+        };
     }
+
+    player.goals += goals;
+    player.assists += assists;
 
     if (trophy) {
-        if (!TROPHIES.includes(trophy)) {
-            return {
-                success: false,
-                message: `**${trophy}** is not a valid trophy.`
-            };
-        }
-
         player.trophies[trophy]++;
     }
 
-    savePlayers(data);
+    if (!savePlayers(database)) {
+        return {
+            success: false,
+            message: 'Could not save the player database.'
+        };
+    }
 
     return {
         success: true,
-        player: player
+        player
     };
 }
 
 function getPlayer(username) {
-    const data = loadPlayers();
+    const database = loadPlayers();
 
-    return data.players[username] || null;
+    const playerKey = findPlayerKey(
+        database,
+        username
+    );
+
+    if (!playerKey) {
+        return null;
+    }
+
+    return database.players[playerKey];
 }
 
 function getAllPlayers() {
-    const data = loadPlayers();
+    const database = loadPlayers();
 
-    return data.players;
+    return database.players;
+}
+
+function removePlayer(username) {
+    const database = loadPlayers();
+
+    const playerKey = findPlayerKey(
+        database,
+        username
+    );
+
+    if (!playerKey) {
+        return {
+            success: false,
+            message: `No player named **${username}** exists.`
+        };
+    }
+
+    const player = database.players[playerKey];
+
+    delete database.players[playerKey];
+
+    if (!savePlayers(database)) {
+        return {
+            success: false,
+            message: 'Could not save the player database.'
+        };
+    }
+
+    return {
+        success: true,
+        player
+    };
+}
+
+function editPlayerClub(username, newClub) {
+    const database = loadPlayers();
+
+    const playerKey = findPlayerKey(
+        database,
+        username
+    );
+
+    if (!playerKey) {
+        return {
+            success: false,
+            message: `No player named **${username}** exists.`
+        };
+    }
+
+    database.players[playerKey].club = newClub;
+
+    if (!savePlayers(database)) {
+        return {
+            success: false,
+            message: 'Could not save the player database.'
+        };
+    }
+
+    return {
+        success: true,
+        player: database.players[playerKey]
+    };
 }
 
 module.exports = {
@@ -148,5 +319,7 @@ module.exports = {
     addPlayer,
     addPlayerStats,
     getPlayer,
-    getAllPlayers
+    getAllPlayers,
+    removePlayer,
+    editPlayerClub
 };
