@@ -1,13 +1,17 @@
 require('dotenv').config();
 
 const fs = require('fs');
+
 const {
     Client,
     GatewayIntentBits,
     REST,
     Routes,
     SlashCommandBuilder,
-    EmbedBuilder
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
 } = require('discord.js');
 
 const client = new Client({
@@ -30,26 +34,32 @@ const clubs = [
 ];
 
 // ==========================================
-// FUNDS
+// FUNDS DATABASE
 // ==========================================
 
 let funds = {};
 
 if (fs.existsSync('./funds.json')) {
     try {
-        funds = JSON.parse(fs.readFileSync('./funds.json', 'utf8'));
-    } catch {
+        funds = JSON.parse(
+            fs.readFileSync('./funds.json', 'utf8')
+        );
+    } catch (error) {
+        console.error('Could not read funds.json:', error);
         funds = {};
     }
 }
 
+// Give new clubs £100,000
 for (const club of clubs) {
+
     if (funds[club] === undefined) {
         funds[club] = 100000;
     }
 }
 
 function saveFunds() {
+
     fs.writeFileSync(
         './funds.json',
         JSON.stringify(funds, null, 2)
@@ -59,26 +69,55 @@ function saveFunds() {
 saveFunds();
 
 // ==========================================
-// RESULTS
+// RESULTS DATABASE
 // ==========================================
 
 let results = [];
 
 if (fs.existsSync('./results.json')) {
+
     try {
+
         results = JSON.parse(
             fs.readFileSync('./results.json', 'utf8')
         );
-    } catch {
+
+    } catch (error) {
+
+        console.error('Could not read results.json:', error);
+
         results = [];
     }
 }
 
 function saveResults() {
+
     fs.writeFileSync(
         './results.json',
         JSON.stringify(results, null, 2)
     );
+}
+
+// ==========================================
+// PERMISSION FUNCTIONS
+// ==========================================
+
+function isAdmin(interaction) {
+
+    return interaction.member.permissions.has('Administrator');
+}
+
+function hasTeamRole(interaction) {
+
+    return interaction.member.roles.cache.some(role =>
+        role.name === 'Team Owner' ||
+        role.name === 'Team Manager'
+    );
+}
+
+function canManageFunds(interaction) {
+
+    return isAdmin(interaction) || hasTeamRole(interaction);
 }
 
 // ==========================================
@@ -87,13 +126,22 @@ function saveResults() {
 
 const commands = [
 
+    // ======================================
+    // PING
+    // ======================================
+
     new SlashCommandBuilder()
         .setName('ping')
         .setDescription('Check if REFL Bot is online'),
 
+    // ======================================
+    // FUNDS
+    // ======================================
+
     new SlashCommandBuilder()
         .setName('funds')
         .setDescription('View or change a club\'s funds')
+
         .addStringOption(option =>
             option
                 .setName('club')
@@ -106,6 +154,7 @@ const commands = [
                     }))
                 )
         )
+
         .addIntegerOption(option =>
             option
                 .setName('amount')
@@ -113,9 +162,14 @@ const commands = [
                 .setRequired(false)
         ),
 
+    // ======================================
+    // RESULT
+    // ======================================
+
     new SlashCommandBuilder()
         .setName('result')
         .setDescription('Record a REFL match result')
+
         .addStringOption(option =>
             option
                 .setName('home')
@@ -128,6 +182,7 @@ const commands = [
                     }))
                 )
         )
+
         .addIntegerOption(option =>
             option
                 .setName('home_score')
@@ -135,6 +190,7 @@ const commands = [
                 .setRequired(true)
                 .setMinValue(0)
         )
+
         .addStringOption(option =>
             option
                 .setName('away')
@@ -147,6 +203,7 @@ const commands = [
                     }))
                 )
         )
+
         .addIntegerOption(option =>
             option
                 .setName('away_score')
@@ -155,9 +212,21 @@ const commands = [
                 .setMinValue(0)
         ),
 
+    // ======================================
+    // TABLE
+    // ======================================
+
     new SlashCommandBuilder()
         .setName('table')
-        .setDescription('Show the REFL league table')
+        .setDescription('Show the REFL league table'),
+
+    // ======================================
+    // RESET TABLE
+    // ======================================
+
+    new SlashCommandBuilder()
+        .setName('resettable')
+        .setDescription('Reset the REFL league table')
 
 ].map(command => command.toJSON());
 
@@ -174,7 +243,9 @@ const rest = new REST({ version: '10' })
 
 client.once('ready', async () => {
 
-    console.log(`REFL Bot is online as ${client.user.tag}`);
+    console.log(
+        `REFL Bot is online as ${client.user.tag}`
+    );
 
     try {
 
@@ -182,23 +253,88 @@ client.once('ready', async () => {
 
         await rest.put(
             Routes.applicationCommands(client.user.id),
-            { body: commands }
+            {
+                body: commands
+            }
         );
 
         console.log('Slash commands registered!');
 
     } catch (error) {
 
-        console.error('Command registration error:', error);
-
+        console.error(
+            'Command registration error:',
+            error
+        );
     }
 });
 
 // ==========================================
-// COMMAND HANDLER
+// INTERACTIONS
 // ==========================================
 
 client.on('interactionCreate', async interaction => {
+
+    // ======================================
+    // BUTTONS
+    // ======================================
+
+    if (interaction.isButton()) {
+
+        // ----------------------------------
+        // CONFIRM RESET
+        // ----------------------------------
+
+        if (interaction.customId === 'confirm_reset') {
+
+            if (!isAdmin(interaction)) {
+
+                await interaction.reply({
+                    content:
+                        '❌ Only **Administrators** can reset the table.',
+                    ephemeral: true
+                });
+
+                return;
+            }
+
+            results = [];
+
+            saveResults();
+
+            await interaction.update({
+                content:
+                    '✅ **REFL league table has been reset.**\n\n' +
+                    'All clubs are back to **0 matches and 0 points**.',
+                embeds: [],
+                components: []
+            });
+
+            return;
+        }
+
+        // ----------------------------------
+        // CANCEL RESET
+        // ----------------------------------
+
+        if (interaction.customId === 'cancel_reset') {
+
+            await interaction.update({
+                content:
+                    '❌ Table reset cancelled.',
+                embeds: [],
+                components: []
+            });
+
+            return;
+        }
+
+        return;
+    }
+
+    // ======================================
+    // SLASH COMMANDS
+    // ======================================
 
     if (!interaction.isChatInputCommand()) return;
 
@@ -221,20 +357,28 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'funds') {
 
-        const club = interaction.options.getString('club');
-        const amount = interaction.options.getInteger('amount');
+        const club =
+            interaction.options.getString('club');
 
+        const amount =
+            interaction.options.getInteger('amount');
+
+        // Check club
         if (!clubs.includes(club)) {
 
             await interaction.reply({
-                content: '❌ That is not a REFL club.',
+                content:
+                    '❌ That is not a REFL club.',
                 ephemeral: true
             });
 
             return;
         }
 
-        // View funds
+        // ----------------------------------
+        // VIEW FUNDS
+        // ----------------------------------
+
         if (amount === null) {
 
             await interaction.reply(
@@ -244,17 +388,24 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
-        // Admin only
-        if (!interaction.member.permissions.has('Administrator')) {
+        // ----------------------------------
+        // PERMISSION CHECK
+        // ----------------------------------
+
+        if (!canManageFunds(interaction)) {
 
             await interaction.reply({
                 content:
-                    '❌ You need **Administrator** permission to change club funds.',
+                    '❌ You need the **Team Owner** or **Team Manager** role to change club funds.',
                 ephemeral: true
             });
 
             return;
         }
+
+        // ----------------------------------
+        // CHANGE FUNDS
+        // ----------------------------------
 
         funds[club] += amount;
 
@@ -264,6 +415,7 @@ client.on('interactionCreate', async interaction => {
 
         saveFunds();
 
+        // Added
         if (amount > 0) {
 
             await interaction.reply(
@@ -271,12 +423,18 @@ client.on('interactionCreate', async interaction => {
                 `New balance: **£${funds[club].toLocaleString()}**`
             );
 
-        } else {
+            return;
+        }
+
+        // Removed
+        if (amount < 0) {
 
             await interaction.reply(
                 `💷 Removed **£${Math.abs(amount).toLocaleString()}** from **${club}**.\n` +
                 `New balance: **£${funds[club].toLocaleString()}**`
             );
+
+            return;
         }
 
         return;
@@ -288,8 +446,23 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'result') {
 
-        const home = interaction.options.getString('home');
-        const away = interaction.options.getString('away');
+        // Only administrators
+        if (!isAdmin(interaction)) {
+
+            await interaction.reply({
+                content:
+                    '❌ Only **Administrators** can add match results.',
+                ephemeral: true
+            });
+
+            return;
+        }
+
+        const home =
+            interaction.options.getString('home');
+
+        const away =
+            interaction.options.getString('away');
 
         const homeScore =
             interaction.options.getInteger('home_score');
@@ -297,52 +470,63 @@ client.on('interactionCreate', async interaction => {
         const awayScore =
             interaction.options.getInteger('away_score');
 
+        // Can't play yourself
         if (home === away) {
 
             await interaction.reply({
-                content: '❌ A club cannot play itself.',
-                ephemeral: true
-            });
-
-            return;
-        }
-
-        // Admin only
-        if (!interaction.member.permissions.has('Administrator')) {
-
-            await interaction.reply({
                 content:
-                    '❌ You need **Administrator** permission to record match results.',
+                    '❌ A club cannot play itself.',
                 ephemeral: true
             });
 
             return;
         }
 
+        // Save result
         results.push({
-            home,
-            away,
-            homeScore,
-            awayScore,
-            timestamp: new Date().toISOString()
+
+            home: home,
+            away: away,
+
+            homeScore: homeScore,
+            awayScore: awayScore,
+
+            recordedBy:
+                interaction.user.tag,
+
+            timestamp:
+                new Date().toISOString()
         });
 
         saveResults();
 
+        // Result message
         let resultText;
 
         if (homeScore > awayScore) {
-            resultText = `🏆 **${home} win!**`;
+
+            resultText =
+                `🏆 **${home} win!**`;
+
         } else if (awayScore > homeScore) {
-            resultText = `🏆 **${away} win!**`;
+
+            resultText =
+                `🏆 **${away} win!**`;
+
         } else {
-            resultText = `🤝 **It's a draw!**`;
+
+            resultText =
+                `🤝 **It's a draw!**`;
         }
 
         await interaction.reply(
+
             `⚽ **REFL Match Result**\n\n` +
-            `**${home}** ${homeScore} - ${awayScore} **${away}**\n\n` +
+
+            `🔴 **${home}** ${homeScore} - ${awayScore} **${away}** 🔵\n\n` +
+
             resultText
+
         );
 
         return;
@@ -354,27 +538,47 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'table') {
 
+        // Team Owner / Manager / Admin
+        if (!canManageFunds(interaction)) {
+
+            await interaction.reply({
+                content:
+                    '❌ You need the **Team Owner** or **Team Manager** role to view the table.',
+                ephemeral: true
+            });
+
+            return;
+        }
+
+        // Create table
         const table = {};
 
         for (const club of clubs) {
 
             table[club] = {
+
                 played: 0,
+
                 wins: 0,
                 draws: 0,
                 losses: 0,
+
                 gf: 0,
                 ga: 0,
                 gd: 0,
+
                 points: 0
             };
         }
 
-        // Calculate table from results
+        // Process results
         for (const result of results) {
 
-            const home = table[result.home];
-            const away = table[result.away];
+            const home =
+                table[result.home];
+
+            const away =
+                table[result.away];
 
             if (!home || !away) continue;
 
@@ -387,19 +591,28 @@ client.on('interactionCreate', async interaction => {
             away.gf += result.awayScore;
             away.ga += result.homeScore;
 
+            // Home win
             if (result.homeScore > result.awayScore) {
 
                 home.wins++;
-                away.losses++;
                 home.points += 3;
 
-            } else if (result.homeScore < result.awayScore) {
+                away.losses++;
+
+            }
+
+            // Away win
+            else if (result.awayScore > result.homeScore) {
 
                 away.wins++;
-                home.losses++;
                 away.points += 3;
 
-            } else {
+                home.losses++;
+
+            }
+
+            // Draw
+            else {
 
                 home.draws++;
                 away.draws++;
@@ -413,48 +626,161 @@ client.on('interactionCreate', async interaction => {
         for (const club of clubs) {
 
             table[club].gd =
-                table[club].gf - table[club].ga;
+                table[club].gf -
+                table[club].ga;
         }
 
         // Sort table
-        const sorted = [...clubs].sort((a, b) => {
+        const sortedClubs =
+            [...clubs].sort((a, b) => {
 
-            if (table[b].points !== table[a].points) {
-                return table[b].points - table[a].points;
+                // Points
+                if (
+                    table[b].points !==
+                    table[a].points
+                ) {
+
+                    return (
+                        table[b].points -
+                        table[a].points
+                    );
+                }
+
+                // Goal difference
+                if (
+                    table[b].gd !==
+                    table[a].gd
+                ) {
+
+                    return (
+                        table[b].gd -
+                        table[a].gd
+                    );
+                }
+
+                // Goals scored
+                return (
+                    table[b].gf -
+                    table[a].gf
+                );
+            });
+
+        // Build table
+        let tableText = '';
+
+        sortedClubs.forEach(
+            (club, index) => {
+
+                const stats =
+                    table[club];
+
+                const gd =
+                    stats.gd > 0
+                        ? `+${stats.gd}`
+                        : `${stats.gd}`;
+
+                tableText +=
+
+                    `**${index + 1}. ${club}**\n` +
+
+                    `P ${stats.played} • ` +
+                    `W ${stats.wins} • ` +
+                    `D ${stats.draws} • ` +
+                    `L ${stats.losses} • ` +
+                    `GF ${stats.gf} • ` +
+                    `GA ${stats.ga} • ` +
+                    `GD ${gd} • ` +
+                    `**${stats.points} pts**\n\n`;
             }
+        );
 
-            if (table[b].gd !== table[a].gd) {
-                return table[b].gd - table[a].gd;
-            }
+        const embed =
+            new EmbedBuilder()
 
-            return table[b].gf - table[a].gf;
-        });
+                .setTitle(
+                    '🏆 REFL League Table'
+                )
 
-        let text = '';
+                .setDescription(
+                    tableText
+                )
 
-        sorted.forEach((club, index) => {
+                .setFooter({
+                    text:
+                        'REFL • Official League Table'
+                })
 
-            const s = table[club];
-
-            const gd =
-                s.gd > 0 ? `+${s.gd}` : `${s.gd}`;
-
-            text +=
-                `**${index + 1}. ${club}**\n` +
-                `P ${s.played} • W ${s.wins} • D ${s.draws} • L ${s.losses} • ` +
-                `GD ${gd} • **${s.points} pts**\n\n`;
-        });
-
-        const embed = new EmbedBuilder()
-            .setTitle('🏆 REFL League Table')
-            .setDescription(text)
-            .setFooter({
-                text: 'REFL • Official League Table'
-            })
-            .setTimestamp();
+                .setTimestamp();
 
         await interaction.reply({
             embeds: [embed]
+        });
+
+        return;
+    }
+
+    // ======================================
+    // RESET TABLE
+    // ======================================
+
+    if (interaction.commandName === 'resettable') {
+
+        // Admin only
+        if (!isAdmin(interaction)) {
+
+            await interaction.reply({
+                content:
+                    '❌ Only **Administrators** can reset the table.',
+                ephemeral: true
+            });
+
+            return;
+        }
+
+        const embed =
+            new EmbedBuilder()
+
+                .setTitle(
+                    '⚠️ Reset REFL League Table?'
+                )
+
+                .setDescription(
+                    'This will permanently delete **ALL recorded match results**.\n\n' +
+                    'Club funds will **NOT** be affected.'
+                );
+
+        const buttons =
+            new ActionRowBuilder()
+                .addComponents(
+
+                    new ButtonBuilder()
+                        .setCustomId(
+                            'confirm_reset'
+                        )
+                        .setLabel(
+                            'Confirm Reset'
+                        )
+                        .setStyle(
+                            ButtonStyle.Danger
+                        ),
+
+                    new ButtonBuilder()
+                        .setCustomId(
+                            'cancel_reset'
+                        )
+                        .setLabel(
+                            'Cancel'
+                        )
+                        .setStyle(
+                            ButtonStyle.Secondary
+                        )
+                );
+
+        await interaction.reply({
+
+            embeds: [embed],
+
+            components: [buttons]
         });
 
         return;
@@ -464,5 +790,9 @@ client.on('interactionCreate', async interaction => {
 // ==========================================
 // LOGIN
 // ==========================================
+
+client.login(
+    process.env.DISCORD_TOKEN
+);
 
 client.login(process.env.DISCORD_TOKEN);
