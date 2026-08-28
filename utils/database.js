@@ -3,40 +3,57 @@ const path = require("path");
 
 const DATA_DIR = path.join(__dirname, "..", "data");
 
+// Make sure data folder exists
 function ensureDataFolder() {
     if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.mkdirSync(DATA_DIR, {
+            recursive: true
+        });
     }
 }
 
+// Get full path to a data file
 function getFilePath(fileName) {
     ensureDataFolder();
     return path.join(DATA_DIR, fileName);
 }
 
-function readJSON(fileName, defaultValue = {}) {
+// Read JSON safely
+function readJSON(fileName, defaultValue = []) {
     const filePath = getFilePath(fileName);
 
-    if (!fs.existsSync(filePath)) {
-        writeJSON(fileName, defaultValue);
-        return defaultValue;
-    }
-
     try {
-        const data = fs.readFileSync(filePath, "utf8");
+        if (!fs.existsSync(filePath)) {
+            writeJSON(fileName, defaultValue);
+            return defaultValue;
+        }
+
+        const data = fs.readFileSync(
+            filePath,
+            "utf8"
+        );
 
         if (!data.trim()) {
             writeJSON(fileName, defaultValue);
             return defaultValue;
         }
 
-        return JSON.parse(data);
+        const parsed = JSON.parse(data);
+
+        return parsed;
+
     } catch (error) {
-        console.error(`Error reading ${fileName}:`, error);
+        console.error(
+            `❌ Error reading ${fileName}:`
+        );
+
+        console.error(error);
+
         return defaultValue;
     }
 }
 
+// Write JSON safely
 function writeJSON(fileName, data) {
     const filePath = getFilePath(fileName);
 
@@ -47,9 +64,19 @@ function writeJSON(fileName, data) {
             "utf8"
         );
 
+        console.log(
+            `💾 Saved ${fileName}`
+        );
+
         return true;
+
     } catch (error) {
-        console.error(`Error writing ${fileName}:`, error);
+        console.error(
+            `❌ Error writing ${fileName}:`
+        );
+
+        console.error(error);
+
         return false;
     }
 }
@@ -57,5 +84,6 @@ function writeJSON(fileName, data) {
 module.exports = {
     readJSON,
     writeJSON,
-    getFilePath
+    getFilePath,
+    ensureDataFolder
 };
