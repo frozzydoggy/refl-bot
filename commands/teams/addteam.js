@@ -26,13 +26,19 @@ module.exports = {
             option
                 .setName("manager")
                 .setDescription("Team manager")
-                .setRequired(true)
+                .setRequired(false)
+        )
+        .addUserOption(option =>
+            option
+                .setName("owner")
+                .setDescription("Team owner")
+                .setRequired(false)
         )
         .addStringOption(option =>
             option
                 .setName("stadium")
                 .setDescription("Team stadium")
-                .setRequired(true)
+                .setRequired(false)
         ),
 
     async execute(interaction) {
@@ -49,7 +55,10 @@ module.exports = {
 
         const name = interaction.options.getString("name");
         const league = interaction.options.getString("league");
+
         const manager = interaction.options.getUser("manager");
+        const owner = interaction.options.getUser("owner");
+
         const stadium = interaction.options.getString("stadium");
 
         const existingTeam = teams.find(
@@ -67,8 +76,9 @@ module.exports = {
             id: Date.now().toString(),
             name: name,
             league: league,
-            managerId: manager.id,
-            stadium: stadium
+            managerId: manager ? manager.id : null,
+            ownerId: owner ? owner.id : null,
+            stadium: stadium || null
         };
 
         teams.push(newTeam);
@@ -93,12 +103,17 @@ module.exports = {
                 },
                 {
                     name: "Manager",
-                    value: `<@${manager.id}>`,
+                    value: manager ? `<@${manager.id}>` : "Not assigned",
+                    inline: true
+                },
+                {
+                    name: "Owner",
+                    value: owner ? `<@${owner.id}>` : "Not assigned",
                     inline: true
                 },
                 {
                     name: "Stadium",
-                    value: stadium,
+                    value: stadium || "Not assigned",
                     inline: true
                 }
             )
