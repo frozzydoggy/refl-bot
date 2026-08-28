@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
-const { readData, writeData } = require("../../utils/database");
-const { requireAdmin } = require("../../utils/permissions");
+const fs = require("fs");
+const path = require("path");
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -48,41 +48,102 @@ module.exports = {
 
     async execute(interaction) {
 
-        // Acknowledge Discord immediately
-        await interaction.deferReply();
+        // Respond immediately
+        await interaction.deferReply({ ephemeral: false });
 
         try {
-            // ==============================
-            // PERMISSION CHECK
-            // ==============================
 
-            const permission = requireAdmin(interaction);
+            // ==========================================
+            // ADMIN CHECK
+            // ==========================================
 
-            if (!permission.allowed) {
+            if (
+                !interaction.member ||
+                !interaction.member.permissions.has("Administrator")
+            ) {
                 return interaction.editReply({
-                    content: permission.message
+                    content:
+                        "❌ You need Administrator permissions to use this command."
                 });
             }
 
-            // ==============================
-            // LOAD DATABASE
-            // ==============================
+            // ==========================================
+            // DATABASE PATH
+            // ==========================================
 
-            const teams = readData("teams.json", []);
+            const filePath = path.join(
+                __dirname,
+                "../../data/teams.json"
+            );
+
+            // ==========================================
+            // MAKE SURE DATA FOLDER EXISTS
+            // ==========================================
+
+            const dataFolder = path.dirname(filePath);
+
+            if (!fs.existsSync(dataFolder)) {
+                fs.mkdirSync(dataFolder, {
+                    recursive: true
+                });
+            }
+
+            // ==========================================
+            // CREATE DATABASE IF MISSING
+            // ==========================================
+
+            if (!fs.existsSync(filePath)) {
+                fs.writeFileSync(
+                    filePath,
+                    "[]",
+                    "utf8"
+                );
+            }
+
+            // ==========================================
+            // READ DATABASE
+            // ==========================================
+
+            let teams;
+
+            try {
+                const file = fs.readFileSync(
+                    filePath,
+                    "utf8"
+                );
+
+                teams = file.trim()
+                    ? JSON.parse(file)
+                    : [];
+            } catch (error) {
+
+                console.error(
+                    "❌ teams.json could not be read:",
+                    error
+                );
+
+                return interaction.editReply({
+                    content:
+                        "❌ `teams.json` contains invalid JSON. Make sure it only contains `[]` for now."
+                });
+            }
 
             if (!Array.isArray(teams)) {
                 return interaction.editReply({
                     content:
-                        "❌ `teams.json` is not formatted correctly. It must start with `[]`."
+                        "❌ `teams.json` must contain an array like `[]`."
                 });
             }
 
-            // ==============================
+            // ==========================================
             // GET OPTIONS
-            // ==============================
+            // ==========================================
 
-            const name = interaction.options.getString("name");
-            const league = interaction.options.getString("league");
+            const name =
+                interaction.options.getString("name");
+
+            const league =
+                interaction.options.getString("league");
 
             const manager =
                 interaction.options.getUser("manager");
@@ -93,57 +154,67 @@ module.exports = {
             const stadium =
                 interaction.options.getString("stadium");
 
-            // ==============================
+            // ==========================================
             // CHECK DUPLICATE
-            // ==============================
+            // ==========================================
 
-            const existingTeam = teams.find(
-                team =>
-                    team.name &&
-                    team.name.toLowerCase() === name.toLowerCase()
+            const existingTeam = teams.find(team =>
+                team.name &&
+                team.name.toLowerCase() ===
+                    name.toLowerCase()
             );
 
             if (existingTeam) {
                 return interaction.editReply({
                     content:
-                        `❌ **${name}** already exists in REFL.`
+                        `❌ **${name}** already exists.`
                 });
             }
 
-            // ==============================
+            // ==========================================
             // CREATE TEAM
-            // ==============================
+            // ==========================================
 
             const newTeam = {
                 id: Date.now().toString(),
                 name: name,
                 league: league,
-                managerId: manager ? manager.id : null,
-                ownerId: owner ? owner.id : null,
+                managerId: manager
+                    ? manager.id
+                    : null,
+                ownerId: owner
+                    ? owner.id
+                    : null,
                 stadium: stadium || null
             };
 
+            // ==========================================
+            // ADD TEAM
+            // ==========================================
+
             teams.push(newTeam);
 
-            // ==============================
-            // SAVE
-            // ==============================
+            // ==========================================
+            // SAVE DATABASE
+            // ==========================================
 
-            const saved = writeData(
-                "teams.json",
-                teams
+            fs.writeFileSync(
+                filePath,
+                JSON.stringify(
+                    teams,
+                    null,
+                    2
+                ),
+                "utf8"
             );
 
-            if (!saved) {
-                return interaction.editReply({
-                    content:
-                        "❌ I couldn't save the team to `teams.json`."
-                });
-            }
+            console.log(
+                `✅ Added team: ${name} (${league})`
+            );
 
-            // ==============================
-            // RESPONSE
-            // ==============================
+            // ==========================================
+            // SUCCESS EMBED
+            // ==========================================
 
             const embed = new EmbedBuilder()
                 .setTitle("⚽ Team Added")
@@ -172,7 +243,8 @@ module.exports = {
                     },
                     {
                         name: "Stadium",
-                        value: stadium || "Not assigned",
+                        value: stadium ||
+                            "Not assigned",
                         inline: true
                     }
                 )
@@ -185,26 +257,23 @@ module.exports = {
         } catch (error) {
 
             console.error(
-                "❌ ERROR IN /addteam:"
+                "================================"
+            );
+
+            console.error(
+                "❌ /addteam ERROR"
             );
 
             console.error(error);
 
-            // Try to respond instead of leaving
-            // Discord with "Interaction failed"
+            console.error(
+                "================================"
+            );
 
-            try {
-                return interaction.editReply({
-                    content:
-                        "❌ Something went wrong while adding the team. Check the Railway logs."
-                });
-            } catch (replyError) {
-                console.error(
-                    "❌ Could not send error response:"
-                );
-
-                console.error(replyError);
-            }
+            return interaction.editReply({
+                content:
+                    "❌ Something went wrong while adding the team. Check the Railway logs for the exact error."
+            });
         }
     }
 };
