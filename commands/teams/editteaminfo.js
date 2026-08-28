@@ -1,56 +1,59 @@
-const {
-    SlashCommandBuilder
-} = require("discord.js");
-
-const { readJSON, writeJSON } = require("../../utils/database");
+const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const { readData, writeData } = require("../../utils/database");
 const { requireAdmin } = require("../../utils/permissions");
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("editteaminfo")
-        .setDescription("Edit information about an REFL team")
+        .setDescription("Edit REFL team information")
         .addStringOption(option =>
             option
                 .setName("team")
-                .setDescription("The team to edit")
+                .setDescription("Team to edit")
                 .setRequired(true)
         )
         .addStringOption(option =>
             option
-                .setName("description")
-                .setDescription("Team description")
+                .setName("name")
+                .setDescription("New team name")
+                .setRequired(false)
+        )
+        .addStringOption(option =>
+            option
+                .setName("league")
+                .setDescription("New league")
+                .setRequired(false)
+                .addChoices(
+                    { name: "D1", value: "D1" },
+                    { name: "D2", value: "D2" }
+                )
+        )
+        .addUserOption(option =>
+            option
+                .setName("manager")
+                .setDescription("New manager")
                 .setRequired(false)
         )
         .addStringOption(option =>
             option
                 .setName("stadium")
-                .setDescription("Team stadium")
-                .setRequired(false)
-        )
-        .addStringOption(option =>
-            option
-                .setName("manager")
-                .setDescription("Team manager")
-                .setRequired(false)
-        )
-        .addStringOption(option =>
-            option
-                .setName("logo")
-                .setDescription("Team logo URL")
+                .setDescription("New stadium")
                 .setRequired(false)
         ),
 
     async execute(interaction) {
-        if (!requireAdmin(interaction)) {
+        const permission = requireAdmin(interaction);
+
+        if (!permission.allowed) {
             return interaction.reply({
-                content: "❌ You need Administrator permissions to use this command.",
+                content: permission.message,
                 ephemeral: true
             });
         }
 
-        const teamName = interaction.options.getString("team");
+        const teams = readData("teams.json", []);
 
-        const teams = readJSON("teams.json", []);
+        const teamName = interaction.options.getString("team");
 
         const team = teams.find(
             t => t.name.toLowerCase() === teamName.toLowerCase()
@@ -58,43 +61,89 @@ module.exports = {
 
         if (!team) {
             return interaction.reply({
-                content: `❌ Team **${teamName}** was not found.`,
+                content: `❌ **${teamName}** was not found.`,
                 ephemeral: true
             });
         }
 
-        const description =
-            interaction.options.getString("description");
+        const newName = interaction.options.getString("name");
+        const newLeague = interaction.options.getString("league");
+        const newManager = interaction.options.getUser("manager");
+        const newStadium = interaction.options.getString("stadium");
 
-        const stadium =
-            interaction.options.getString("stadium");
-
-        const manager =
-            interaction.options.getString("manager");
-
-        const logo =
-            interaction.options.getString("logo");
-
-        if (description !== null) {
-            team.description = description;
+        // Make sure at least one change was provided
+        if (!newName && !newLeague && !newManager && !newStadium) {
+            return interaction.reply({
+                content: "❌ You need to provide something to change.",
+                ephemeral: true
+            });
         }
 
-        if (stadium !== null) {
-            team.stadium = stadium;
+        // Prevent duplicate team names
+        if (newName) {
+            const duplicate = teams.find(
+                t =>
+                    t.id !== team.id &&
+                    t.name.toLowerCase() === newName.toLowerCase()
+            );
+
+            if (duplicate) {
+                return interaction.reply({
+                    content: `❌ **${newName}** already exists.`,
+                    ephemeral: true
+                });
+            }
+
+            team.name = newName;
         }
 
-        if (manager !== null) {
-            team.manager = manager;
+        if (newLeague) {
+            team.league = newLeague;
         }
 
-        if (logo !== null) {
-            team.logo = logo;
+        if (newManager) {
+            team.managerId = newManager.id;
         }
 
-        writeJSON("teams.json", teams);
+        if (newStadium) {
+            team.stadium = newStadium;
+        }
 
-        await interaction.reply(
-            `✅ **${team.name}** has been updated.`
-        );
+        const saved = writeData("teams.json", teams);
+
+        if (!saved) {
+            return interaction.reply({
+                content: "❌ Failed to save the team changes.",
+                ephemeral: true
+            });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle("🛠️ Team Updated")
+            .setDescription(`**${team.name}** has been updated.`)
+            .addFields(
+                {
+                    name: "League",
+                    value: team.league || "Not set",
+                    inline: true
+                },
+                {
+                    name: "Manager",
+                    value: team.managerId
+                        ? `<@${team.managerId}>`
+                        : "Not set",
+                    inline: true
+                },
+                {
+                    name: "Stadium",
+                    value: team.stadium || "Not set",
+                    inline: true
+                }
+            )
+            .setTimestamp();
+
+        return interaction.reply({
+            embeds: [embed]
+        });
     }
 };
